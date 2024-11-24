@@ -6,9 +6,6 @@ module Common = struct
   type error = [ `Character_not_supp of char | `Double_dot_in_number ]
   type number = Int of int | Float of float
 
-  let some_or option error =
-    match option with Some r -> Ok r | None -> Error error
-
   let float_of_num n = match n with Int i -> float_of_int i | Float f -> f
 
   let operator_bigger l r =
