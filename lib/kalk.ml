@@ -8,6 +8,20 @@ module Common = struct
 
   let some_or option error =
     match option with Some r -> Ok r | None -> Error error
+
+  let float_of_num n = match n with Int i -> float_of_int i | Float f -> f
+
+  let display_op op =
+    match op with Plus -> "+" | Minus -> "-" | Multiply -> "*" | Divide -> "/"
+
+  let display_num n =
+    match n with Float f -> string_of_float f | Int i -> string_of_int i
+
+  let display_error error =
+    match error with
+    | `Character_not_supp c -> "Coll other " ^ Char.escaped c
+    | `Double_dot_in_number -> "Dot is two times in a number"
+    | `Not_impl -> "Not implemented yet"
 end
 
 module Token = struct
@@ -34,21 +48,13 @@ module Token = struct
   let display (token : token) =
     match token with
     | Number n -> "Number(" ^ String.of_seq (List.to_seq n) ^ ")"
-    | Operator Plus -> "+"
-    | Operator Minus -> "-"
-    | Operator Divide -> "/"
-    | Operator Multiply -> "*"
+    | Operator op -> display_op op
     | LBrace -> "("
     | RBrace -> ")"
     | Ident f -> String.of_seq (List.to_seq f)
 
   let debug tokens =
     List.fold_left (fun text tok -> text ^ tok) "" (List.map display tokens)
-
-  let display_error error =
-    match error with
-    | `Character_not_supp c -> "Coll other " ^ Char.escaped c
-    | `Double_dot_in_number -> "Dot is two times in a number"
 
   let init text =
     {
@@ -120,26 +126,30 @@ module Token = struct
         in
         collect finalized_parser other
 
-  let rec tokenize parser =
-    match parser.text with
-    | [] -> (
-        let tok = finalize parser.collecting in
-        match tok with
-        | Some t -> Ok (List.rev (t :: parser.tokens))
-        | None -> Ok (List.rev parser.tokens))
-    | char :: _ -> (
-        match char with
-        | '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ->
-            collect parser (`Number char) >>= tokenize
-        | '+' -> collect parser (`Token (Operator Plus)) >>= tokenize
-        | '-' -> collect parser (`Token (Operator Minus)) >>= tokenize
-        | '/' -> collect parser (`Token (Operator Divide)) >>= tokenize
-        | '*' -> collect parser (`Token (Operator Multiply)) >>= tokenize
-        | '(' -> collect parser (`Token LBrace) >>= tokenize
-        | ')' -> collect parser (`Token RBrace) >>= tokenize
-        | '.' -> collect parser `Dot >>= tokenize
-        | ' ' | '\t' -> collect parser `Space >>= tokenize
-        | c -> Error (`Character_not_supp c))
+  let tokenize text =
+    let rec tokenize' parser =
+      match parser.text with
+      | [] -> (
+          let tok = finalize parser.collecting in
+          match tok with
+          | Some t -> Ok (List.rev (t :: parser.tokens))
+          | None -> Ok (List.rev parser.tokens))
+      | char :: _ -> (
+          match char with
+          | '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ->
+              collect parser (`Number char) >>= tokenize'
+          | '+' -> collect parser (`Token (Operator Plus)) >>= tokenize'
+          | '-' -> collect parser (`Token (Operator Minus)) >>= tokenize'
+          | '/' -> collect parser (`Token (Operator Divide)) >>= tokenize'
+          | '*' -> collect parser (`Token (Operator Multiply)) >>= tokenize'
+          | '(' -> collect parser (`Token LBrace) >>= tokenize'
+          | ')' -> collect parser (`Token RBrace) >>= tokenize'
+          | '.' -> collect parser `Dot >>= tokenize'
+          | ' ' | '\t' -> collect parser `Space >>= tokenize'
+          | c -> Error (`Character_not_supp c))
+    in
+
+    tokenize' @@ init text
 end
 
 module AST = struct
@@ -150,8 +160,8 @@ module AST = struct
 
   type parser = {
     tokens : Token.token list;
-    head : node option;
     progress : progress;
+    result : node option;
   }
 
   let operator a op b =
@@ -177,31 +187,60 @@ module AST = struct
     | Int a, Float b -> operator_float (float_of_int a) op b
     | Float a, Int b -> operator_float a op (float_of_int b)
 
-  let init tokens = { tokens; head = None; progress = Empty }
-  let parse (_parser : parser) = Ok (Number (Int 4))
+  let init tokens = { tokens; progress = Empty; result = None }
 
-  (* let parse (parser : parser) = *)
-  (* match parser with *)
-  (* | { tokens = []; progress = Empty; head = Some n; _ } -> Ok n *)
-  (* | { tokens = Number n :: rest; progress = Empty } -> Error `left_and_go *)
-  (* | { tokens = Number n :: rest; progress = Middle (l, op) } -> *)
-  (*     Error `full_and_go *)
-  (* | { tokens = Operator op :: rest; progress = Left l } -> *)
-  (*     Error `middle_with_op *)
+  let rec display_node n =
+    match n with
+    | Number n -> display_num n
+    | Expression (l, op, r) ->
+        display_node l ^ " " ^ display_op op ^ " " ^ display_node r
+
+  let char_list_to_num c =
+    let str = String.of_seq @@ List.to_seq c in
+    match String.index_opt str '.' with
+    | Some _ -> Float (float_of_string str)
+    | None -> Int (int_of_string str)
+
+  let parse text =
+    let rec parse' (parser : parser) =
+      let first_as_num tokens num =
+        { parser with tokens; progress = Left (Number num) }
+      in
+
+      let last_as_num tokens a op b =
+        {
+          tokens;
+          progress = Empty;
+          result = Some (Expression (a, op, Number b));
+        }
+      in
+
+      let middle_as_op tokens l op =
+        { tokens; progress = Middle (l, op); result = None }
+      in
+
+      match parser with
+      | { tokens = []; progress = Empty; result = Some n; _ } -> Ok n
+      | { tokens = Number n :: rest; progress = Empty; result = None } ->
+          char_list_to_num n |> first_as_num rest |> parse'
+      | { tokens = Number n :: rest; progress = Middle (l, op); result = None }
+        ->
+          char_list_to_num n |> last_as_num rest l op |> parse'
+      | { tokens = Operator op :: rest; progress = Left l; result = None } ->
+          middle_as_op rest l op |> parse'
+      | _ -> Error `Not_impl
+    in
+
+    parse' @@ init text
 
   let rec exec head =
     match head with
     | Number n -> n
     | Expression (a, op, b) -> operator (exec a) op (exec b)
-
-  let float_of_number n =
-    match n with Int i -> Ok (float_of_int i) | Float f -> Ok f
 end
 
 let exec text =
-  let ( let* ) = Result.bind in
-  let* tokens = Token.tokenize (Token.init text) in
-  let parser = AST.init tokens in
-  let* nodes = AST.parse parser in
+  let* tokens = Token.tokenize text in
+  let* nodes = AST.parse tokens in
   let result = AST.exec nodes in
   Ok result

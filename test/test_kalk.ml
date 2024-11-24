@@ -2,27 +2,38 @@ open Kalk
 open Alcotest
 
 let expect_tokens text expected =
-  Token.(
-    match tokenize (init text) with
+  Common.(
+    match Token.tokenize text with
     | Error e -> fail (display_error e)
     | Ok t ->
         check (list string) "parse result"
-          (List.map display expected)
-          (List.map display t))
+          (List.map Token.display expected)
+          (List.map Token.display t))
 
 let expect_error text error =
-  Token.(
-    match tokenize (init text) with
-    | Error e ->
-        check string "parse error" (Token.display_error e)
-          (Token.display_error error)
-    | Ok t -> fail ("Expected to fail, received " ^ debug t))
+  Common.(
+    Token.(
+      match tokenize text with
+      | Error e ->
+          check string "parse error" (display_error e) (display_error error)
+      | Ok t -> fail ("Expected to fail, received " ^ debug t)))
+
+let expect_ast text expected =
+  Common.(
+    AST.(
+      Token.(
+        let ast = tokenize text >>= parse in
+        match ast with
+        | Ok n ->
+            check string "parse ast" (display_node n) (display_node expected)
+        | Error e -> fail (display_error e))))
 
 let expect_result text expected =
-  let result = exec text >>= AST.float_of_number in
-  match result with
-  | Ok n -> check (float epsilon_float) "exec error" n expected
-  | Error e -> fail (Token.display_error e)
+  Common.(
+    let result = exec text |> Result.map float_of_num in
+    match result with
+    | Ok n -> check (float epsilon_float) "exec error" n expected
+    | Error e -> fail (display_error e))
 
 let test_parser _ =
   expect_tokens "112" [ Number [ '1'; '1'; '2' ] ];
@@ -40,6 +51,7 @@ let test_parser _ =
       Number [ '3' ];
     ];
   expect_error "1+ _ " (`Character_not_supp '_');
+  expect_ast "1 +2" (Expression (Number (Int 1), Plus, Number (Int 2)));
   expect_result "1 +2" 3.0
 
 let () =
