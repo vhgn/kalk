@@ -38,6 +38,8 @@ let expect_result text expected =
 let test_parser _ =
   expect_tokens "112" [ Number [ '1'; '1'; '2' ] ];
   expect_tokens "1+2" [ Number [ '1' ]; Operator Plus; Number [ '2' ] ];
+  expect_tokens "1.5+2.1"
+    [ Number [ '1'; '.'; '5' ]; Operator Plus; Number [ '2'; '.'; '1' ] ];
   expect_tokens "(1+2)"
     [ LBrace; Number [ '1' ]; Operator Plus; Number [ '2' ]; RBrace ];
   expect_tokens "1+2 * 443 -    3"
@@ -52,7 +54,12 @@ let test_parser _ =
     ];
   expect_error "1+ _ " (`Character_not_supp '_');
   expect_ast "1 +2" (Expression (Number (Int 1), Plus, Number (Int 2)));
-  expect_result "1 +2" 3.0
+  expect_result "1 +2" 3.0;
+  expect_result "0.5+0.5" 1.0;
+  expect_result "1 +2 +    3" 6.0;
+  expect_result "1 +2 *    3" 7.0;
+  expect_result "3 + 44.5 *2 -    3" 89.0;
+  ()
 
 let () =
   let open Alcotest in

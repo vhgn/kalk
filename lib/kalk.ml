@@ -11,6 +11,13 @@ module Common = struct
 
   let float_of_num n = match n with Int i -> float_of_int i | Float f -> f
 
+  let operator_bigger l r =
+    let operator_level op =
+      match op with Plus -> 1 | Minus -> 1 | Multiply -> 2 | Divide -> 2
+    in
+
+    operator_level l > operator_level r
+
   let display_op op =
     match op with Plus -> "+" | Minus -> "-" | Multiply -> "*" | Divide -> "/"
 
@@ -97,7 +104,7 @@ module Token = struct
         Ok
           {
             parser with
-            collecting = Numbers (cl, true);
+            collecting = Numbers ('.' :: cl, true);
             text = skip parser.text;
           }
     | Numbers (_, true), `Dot -> Error `Double_dot_in_number
@@ -219,6 +226,19 @@ module AST = struct
         { tokens; progress = Middle (l, op); result = None }
       in
 
+      let middle_as_op_higher tokens old_n new_op =
+        match old_n with
+        | Number _ -> middle_as_op tokens old_n new_op |> parse'
+        | Expression (old_l, old_op, old_r) -> (
+            let add_node next_n = Expression (old_l, old_op, next_n) in
+            match operator_bigger new_op old_op with
+            | true ->
+                parse'
+                  { tokens; result = None; progress = Middle (old_r, new_op) }
+                |> Result.map add_node
+            | false -> middle_as_op tokens old_n new_op |> parse')
+      in
+
       match parser with
       | { tokens = []; progress = Empty; result = Some n; _ } -> Ok n
       | { tokens = Number n :: rest; progress = Empty; result = None } ->
@@ -228,6 +248,8 @@ module AST = struct
           char_list_to_num n |> last_as_num rest l op |> parse'
       | { tokens = Operator op :: rest; progress = Left l; result = None } ->
           middle_as_op rest l op |> parse'
+      | { tokens = Operator op :: rest; progress = Empty; result = Some n } ->
+          middle_as_op_higher rest n op
       | _ -> Error `Not_impl
     in
 
