@@ -5,6 +5,7 @@ module Common = struct
   type operator = Plus | Minus | Divide | Multiply
   type error = [ `Character_not_supp of char | `Double_dot_in_number ]
   type number = Int of int | Float of float
+  type function_name = Sin | Cos
 
   let float_of_num n = match n with Int i -> float_of_int i | Float f -> f
 
@@ -20,6 +21,8 @@ module Common = struct
 
   let display_num n =
     match n with Float f -> string_of_float f | Int i -> string_of_int i
+
+  let display_func f = match f with Sin -> "sin" | Cos -> "cos"
 
   let display_error error =
     match error with
@@ -159,7 +162,11 @@ end
 module AST = struct
   open Common
 
-  type node = Number of number | Expression of node * operator * node
+  type node =
+    | Number of number
+    | Expression of node * operator * node
+    | FunctionCall of function_name * node
+
   type progress = Empty | Left of node | Middle of node * operator
 
   type parser = {
@@ -167,6 +174,9 @@ module AST = struct
     progress : progress;
     result : node option;
   }
+
+  let func_exec f o =
+    match f with Sin -> sin @@ float_of_num o | Cos -> cos @@ float_of_num o
 
   let operator a op b =
     let operator_int a op b =
@@ -198,6 +208,7 @@ module AST = struct
     | Number n -> display_num n
     | Expression (l, op, r) ->
         display_node l ^ " " ^ display_op op ^ " " ^ display_node r
+    | FunctionCall (f, n) -> display_func f ^ display_node n
 
   let char_list_to_num c =
     let str = String.of_seq @@ List.to_seq c in
@@ -215,7 +226,7 @@ module AST = struct
         {
           tokens;
           progress = Empty;
-          result = Some (Expression (a, op, Number b));
+          result = Some (Expression (a, op, b));
         }
       in
 
@@ -225,7 +236,8 @@ module AST = struct
 
       let middle_as_op_higher tokens old_n new_op =
         match old_n with
-        | Number _ -> middle_as_op tokens old_n new_op |> parse'
+        | Number _ | FunctionCall _ ->
+            middle_as_op tokens old_n new_op |> parse'
         | Expression (old_l, old_op, old_r) -> (
             let add_node next_n = Expression (old_l, old_op, next_n) in
             match operator_bigger new_op old_op with
@@ -242,7 +254,13 @@ module AST = struct
           char_list_to_num n |> first_as_num rest |> parse'
       | { tokens = Number n :: rest; progress = Middle (l, op); result = None }
         ->
-          char_list_to_num n |> last_as_num rest l op |> parse'
+          Number (char_list_to_num n) |> last_as_num rest l op |> parse'
+      | { tokens = LBrace :: rest; progress = Middle (l,op); result } ->
+          let node = parse' { tokens = rest; progress = Empty; result } in
+          match (rest, node) with
+          (LBrace :: others, Ok n) -> (last_as_num others l op n) |> parse'
+          (_, Error e) -> Error e
+          _ -> Error `Brace_not_closed
       | { tokens = Operator op :: rest; progress = Left l; result = None } ->
           middle_as_op rest l op |> parse'
       | { tokens = Operator op :: rest; progress = Empty; result = Some n } ->
@@ -256,6 +274,7 @@ module AST = struct
     match head with
     | Number n -> n
     | Expression (a, op, b) -> operator (exec a) op (exec b)
+    | FunctionCall (f, n) -> Float (func_exec f (exec n))
 end
 
 let exec text =
